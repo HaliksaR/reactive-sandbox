@@ -1,48 +1,61 @@
 package com.haliksar.reactive.flow
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.runBlocking
+import kotlin.coroutines.CoroutineContext
 
+interface Generator {
+    fun generate(count: Int): List<Int>
+}
 
-
-class AppFlow : CoroutineScope by CoroutineScope(Dispatchers.Default) {
-    companion object {
-        fun start() {
-            AppFlow().start()
-        }
-    }
-
-    private fun generate(count: Int): List<Int> =
+class GeneratorImpl : Generator {
+    override fun generate(count: Int): List<Int> =
         mutableListOf<Int>().apply {
             repeat(count) { add((0..Int.MAX_VALUE).random()) }
         }
+}
 
-    private fun start() = runBlocking {
-        val flow = flow {
-            generate(20).forEachIndexed { index, item ->
-                emit(index)
-                delay(10)
-            }
-        }
+interface Flowable {
+    val flows: MutableList<Flow<*>>
+}
 
-        val flow2 = flow {
-            generate(10).forEachIndexed { index, item ->
-                emit(index.toString())
-                delay(10)
-            }
-        }
+class FlowableImpl : Flowable {
+    override val flows: MutableList<Flow<*>> = mutableListOf()
+}
 
-        flow.combine(flow2) { a, b -> "$a + $b" }
-            .onEach {
+class AppFlow(
+    context: CoroutineContext = Dispatchers.IO
+) : CoroutineScope by CoroutineScope(context),
+    Generator by GeneratorImpl(),
+    Flowable by FlowableImpl() {
+
+    private val setWorkerNames = mutableSetOf<String>()
+
+    fun initStopDelay(delay: Long?, scope: CoroutineScope): AppFlow {
+        delay?.let {
+            scope.launch {
+                delay(it)
+                this@AppFlow.cancel()
                 println(Thread.currentThread().toString())
+                println(setWorkerNames.joinToString("\n"))
             }
-            .flowOn(Dispatchers.IO)
+        }
+        return this
+    }
+
+    fun start(): Job =
+        combine(*flows.toTypedArray()) { a ->
+            val result = StringBuilder()
+            a.forEach { result.append(it) }
+            result.toString()
+        }.onEach {
+            setWorkerNames.add(Thread.currentThread().name)
+            println(Thread.currentThread().toString())
+        }.flowOn(Dispatchers.IO)
             .onEach {
+                setWorkerNames.add(Thread.currentThread().name)
                 println(Thread.currentThread().toString())
                 println(it)
             }.launchIn(this)
-    }
+
 }
